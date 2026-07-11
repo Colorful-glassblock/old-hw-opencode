@@ -1,6 +1,9 @@
-name: Build Core2 Bun (with official Bun bootstrap)
+name: Core2 Bun + opencode
 
 on:
+  push:
+    branches:
+      - dev
   workflow_dispatch:
 
 jobs:
@@ -19,78 +22,80 @@ jobs:
           target: x86_64-unknown-linux-gnu
           cache: false
 
+      - name: Install Clang 21
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          sudo add-apt-repository "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main"
+          sudo apt update
+          sudo apt install -y clang-21 lld-21 libclang-rt-21-dev
+          sudo ln -sf /usr/bin/clang-21 /usr/bin/clang
+          sudo ln -sf /usr/bin/clang++-21 /usr/bin/clang++
+          sudo ln -sf /usr/bin/lld-21 /usr/bin/lld
+          clang --version
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Install official Bun (normal version)
+      - name: Install official Bun
         run: |
-          # 安装官方发布的最新 Bun
           curl -fsSL https://bun.sh/install | bash
           echo "$HOME/.bun/bin" >> $GITHUB_PATH
           export PATH="$HOME/.bun/bin:$PATH"
           bun --version
 
-      - name: Cache Rust
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            /tmp/bun-src/target
-          key: ${{ runner.os }}-bun-core2-${{ hashFiles('/tmp/bun-src/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-bun-core2-
-
-      - name: Clone Bun and lol-html
+      - name: Clone Bun source + lol-html
         run: |
           git clone --depth 1 https://github.com/oven-sh/bun.git /tmp/bun-src
           cd /tmp/bun-src
           mkdir -p vendor
           git clone --depth 1 https://github.com/cloudflare/lol-html.git vendor/lolhtml
-          if [ ! -f "vendor/lolhtml/Cargo.toml" ]; then
-            echo "lol-html download failed!"
-            exit 1
-          fi
 
       - name: Generate build_options.rs with official Bun
         run: |
           cd /tmp/bun-src
-          
-          # 用官方 Bun 执行配置生成命令
+          export PATH="$HOME/.bun/bin:$PATH"
+          export CC=/usr/bin/clang-21
+          export CXX=/usr/bin/clang++-21
+          export LD=/usr/bin/lld-21
           bun bd --configure-only
-          
-          # 验证文件是否生成
-          if [ -f "build/debug/codegen/build_options.rs" ]; then
-            echo "build_options.rs generated successfully!"
-            cat build/debug/codegen/build_options.rs | head -10
-          else
-            echo "Failed to generate build_options.rs!"
-            find . -name "build_options.rs" 2>/dev/null
+          if [ ! -f "build/debug/codegen/build_options.rs" ]; then
+            echo "❌ build_options.rs not found"
             exit 1
           fi
 
-      - name: Build Bun (Core2 optimized)
+      - name: Build Core2 Bun
         run: |
           cd /tmp/bun-src
-          
-          # 设置 Core2 优化
           export RUSTFLAGS="-C target-cpu=core2 -C opt-level=3 -C link-arg=-s"
-          
-          # 构建
+          export CC=/usr/bin/clang-21
+          export CXX=/usr/bin/clang++-21
+          export LD=/usr/bin/lld-21
           cargo build --release --target x86_64-unknown-linux-gnu
-          
-          # 验证产物
-          if [ -f "target/x86_64-unknown-linux-gnu/release/bun" ]; then
-            echo "Build successful!"
-            ls -la target/x86_64-unknown-linux-gnu/release/bun
-          else
-            echo "Build failed: bun binary not found"
+          cp target/x86_64-unknown-linux-gnu/release/bun ${{ github.workspace }}/bun-core2
+
+      - name: Install opencode dependencies with Core2 Bun
+        run: |
+          chmod +x ${{ github.workspace }}/bun-core2
+          ${{ github.workspace }}/bun-core2 install
+
+      - name: Build opencode with Core2 Bun
+        run: |
+          ENTRY=$(find packages -name "index.ts" -o -name "cli.ts" -o -name "main.ts" | head -1)
+          if [ -z "$ENTRY" ]; then
+            echo "No entry found! Listing all ts files:"
+            find . -name "*.ts" | head -20
             exit 1
           fi
+          echo "Entry found: $ENTRY"
+          ${{ github.workspace }}/bun-core2 build $ENTRY \
+            --compile --target=bun-linux-x64 --outfile=opencode-core2
 
-      - name: Upload Core2 Bun
+      - name: Upload both binaries
         uses: actions/upload-artifact@v4
         with:
-          name: bun-core2
-          path: /tmp/bun-src/target/x86_64-unknown-linux-gnu/release/bun
+          name: core2-bun-and-opencode
+          path: |
+            bun-core2
+            opencode-core2
