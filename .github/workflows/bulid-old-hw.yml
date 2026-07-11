@@ -29,23 +29,23 @@ jobs:
           key: ${{ runner.os }}-bun-core2-${{ hashFiles('/tmp/bun-src/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-bun-core2-
 
-      - name: Clone Bun and manually fix submodules
+      - name: Clone Bun and download lolhtml
         run: |
           # 1. 浅克隆 Bun
           git clone --depth 1 https://github.com/oven-sh/bun.git /tmp/bun-src
           cd /tmp/bun-src
           
-          # 2. 手动拉取 lolhtml 子模块（直接克隆到 vendor/lolhtml）
-          mkdir -p vendor
-          git clone --depth 1 https://github.com/oven-sh/lolhtml.git vendor/lolhtml
+          # 2. 下载 lolhtml 源码（不用 Git）
+          mkdir -p vendor/lolhtml
+          curl -L https://github.com/oven-sh/lolhtml/archive/refs/heads/main.tar.gz | tar -xz --strip-components=1 -C vendor/lolhtml
           
-          # 3. 如果还有其他缺失的子模块，可以补充（可选）
-          # git submodule update --init --depth 1 --recursive || true
+          # 3. 检查是否下载成功
+          ls -la vendor/lolhtml/
           
           # 4. 设置 Core2 优化
           export RUSTFLAGS="-C target-cpu=core2 -C opt-level=3 -C link-arg=-s"
           
-          # 5. 构建 Bun（主包是 bun）
+          # 5. 构建 Bun
           cargo build --release --target x86_64-unknown-linux-gnu -p bun
           
           # 6. 复制产物
@@ -58,9 +58,13 @@ jobs:
         run: |
           ${{ github.workspace }}/bun-core2 install
 
+      - name: Find entry point
+        run: |
+          echo "=== Looking for entry ==="
+          find packages -name "index.ts" -o -name "cli.ts" -o -name "main.ts" | head -10
+
       - name: Build opencode with Core2 Bun
         run: |
-          # 自动查找入口文件
           ENTRY=$(find packages -name "index.ts" -o -name "cli.ts" -o -name "main.ts" | head -1)
           if [ -z "$ENTRY" ]; then
             echo "No entry found! Listing all ts files:"
