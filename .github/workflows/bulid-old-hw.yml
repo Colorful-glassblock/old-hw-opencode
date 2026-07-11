@@ -12,15 +12,14 @@ jobs:
           ref: dev
           submodules: recursive
 
-      # ===== 1. 安装 Rust（但不跑 cache，避免误判）=====
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
           target: x86_64-unknown-linux-gnu
-          cache: false   # 关键：关闭自动 cache，避免在非 Rust 项目根目录报错
+          cache: false
 
-      - name: Cache Rust manually
+      - name: Cache Rust
         uses: actions/cache@v4
         with:
           path: |
@@ -28,44 +27,40 @@ jobs:
             ~/.cargo/git
             /tmp/bun-src/target
           key: ${{ runner.os }}-bun-core2-${{ hashFiles('/tmp/bun-src/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-core2-
+          restore-keys: ${{ runner.os }}-bun-core2-
 
-      # ===== 2. 编译 Core2 版 Bun（必须拉子模块）=====
-      - name: Clone and build Bun (Core2)
+      - name: Clone Bun and manually fix submodules
         run: |
-          # 浅克隆 Bun
-          git clone --depth 1 --recurse-submodules https://github.com/oven-sh/bun.git /tmp/bun-src
+          # 1. 浅克隆 Bun
+          git clone --depth 1 https://github.com/oven-sh/bun.git /tmp/bun-src
           cd /tmp/bun-src
           
-          # 手动拉取所有子模块（确保 lol_html 存在）
-          git submodule update --init --recursive --depth 1
+          # 2. 手动拉取 lolhtml 子模块（直接克隆到 vendor/lolhtml）
+          mkdir -p vendor
+          git clone --depth 1 https://github.com/oven-sh/lolhtml.git vendor/lolhtml
           
-          # 设置 Core2 优化
+          # 3. 如果还有其他缺失的子模块，可以补充（可选）
+          # git submodule update --init --depth 1 --recursive || true
+          
+          # 4. 设置 Core2 优化
           export RUSTFLAGS="-C target-cpu=core2 -C opt-level=3 -C link-arg=-s"
           
-          # 构建（Bun 的 Rust 主包是 bun）
+          # 5. 构建 Bun（主包是 bun）
           cargo build --release --target x86_64-unknown-linux-gnu -p bun
           
-          # 复制产物
+          # 6. 复制产物
           cp target/x86_64-unknown-linux-gnu/release/bun ${{ github.workspace }}/bun-core2
 
       - name: Make Bun executable
         run: chmod +x ${{ github.workspace }}/bun-core2
 
-      # ===== 3. 用 Core2 Bun 编译 opencode =====
-      - name: Install dependencies with Core2 Bun
+      - name: Install opencode dependencies with Core2 Bun
         run: |
           ${{ github.workspace }}/bun-core2 install
 
-      - name: Find entry point
-        run: |
-          echo "=== Looking for entry ==="
-          find packages -name "index.ts" -o -name "cli.ts" -o -name "main.ts" | head -10
-
       - name: Build opencode with Core2 Bun
         run: |
-          # 自动查找入口
+          # 自动查找入口文件
           ENTRY=$(find packages -name "index.ts" -o -name "cli.ts" -o -name "main.ts" | head -1)
           if [ -z "$ENTRY" ]; then
             echo "No entry found! Listing all ts files:"
