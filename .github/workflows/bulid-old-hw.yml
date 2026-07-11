@@ -31,7 +31,6 @@ jobs:
           sudo ln -sf /usr/bin/clang-21 /usr/bin/clang
           sudo ln -sf /usr/bin/clang++-21 /usr/bin/clang++
           sudo ln -sf /usr/bin/lld-21 /usr/bin/lld
-          clang --version
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -45,20 +44,17 @@ jobs:
           export PATH="$HOME/.bun/bin:$PATH"
           bun --version
 
-      - name: Clone Bun source + lol-html (fix directory name)
+      - name: Clone Bun with submodules (shallow)
         run: |
           git clone --depth 1 https://github.com/oven-sh/bun.git /tmp/bun-src
           cd /tmp/bun-src
-          mkdir -p vendor
-          # 克隆到临时目录，再重命名为 lolhtml
-          git clone --depth 1 https://github.com/cloudflare/lol-html.git /tmp/lol-html-tmp
-          mv /tmp/lol-html-tmp vendor/lolhtml
-          # 验证
+          git submodule sync
+          git submodule update --init --depth 1
           if [ ! -f "vendor/lolhtml/Cargo.toml" ]; then
-            echo "❌ lolhtml missing!"
+            echo "❌ lolhtml submodule failed!"
             exit 1
           fi
-          echo "✅ lolhtml ready at vendor/lolhtml"
+          echo "✅ Submodules ready"
 
       - name: Generate build_options.rs
         run: |
