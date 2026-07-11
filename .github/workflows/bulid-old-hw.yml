@@ -45,14 +45,22 @@ jobs:
           export PATH="$HOME/.bun/bin:$PATH"
           bun --version
 
-      - name: Clone Bun source + lol-html
+      - name: Clone Bun source + lol-html (fix directory name)
         run: |
           git clone --depth 1 https://github.com/oven-sh/bun.git /tmp/bun-src
           cd /tmp/bun-src
           mkdir -p vendor
-          git clone --depth 1 https://github.com/cloudflare/lol-html.git vendor/lolhtml
+          # 克隆到临时目录，再重命名为 lolhtml
+          git clone --depth 1 https://github.com/cloudflare/lol-html.git /tmp/lol-html-tmp
+          mv /tmp/lol-html-tmp vendor/lolhtml
+          # 验证
+          if [ ! -f "vendor/lolhtml/Cargo.toml" ]; then
+            echo "❌ lolhtml missing!"
+            exit 1
+          fi
+          echo "✅ lolhtml ready at vendor/lolhtml"
 
-      - name: Generate build_options.rs with official Bun
+      - name: Generate build_options.rs
         run: |
           cd /tmp/bun-src
           export PATH="$HOME/.bun/bin:$PATH"
@@ -61,7 +69,7 @@ jobs:
           export LD=/usr/bin/lld-21
           bun bd --configure-only
           if [ ! -f "build/debug/codegen/build_options.rs" ]; then
-            echo "❌ build_options.rs not found"
+            echo "❌ build_options.rs not generated!"
             exit 1
           fi
 
@@ -75,7 +83,7 @@ jobs:
           cargo build --release --target x86_64-unknown-linux-gnu
           cp target/x86_64-unknown-linux-gnu/release/bun ${{ github.workspace }}/bun-core2
 
-      - name: Install opencode dependencies with Core2 Bun
+      - name: Install opencode deps with Core2 Bun
         run: |
           chmod +x ${{ github.workspace }}/bun-core2
           ${{ github.workspace }}/bun-core2 install
@@ -84,15 +92,15 @@ jobs:
         run: |
           ENTRY=$(find packages -name "index.ts" -o -name "cli.ts" -o -name "main.ts" | head -1)
           if [ -z "$ENTRY" ]; then
-            echo "No entry found! Listing all ts files:"
+            echo "❌ No entry found!"
             find . -name "*.ts" | head -20
             exit 1
           fi
-          echo "Entry found: $ENTRY"
+          echo "✅ Entry found: $ENTRY"
           ${{ github.workspace }}/bun-core2 build $ENTRY \
             --compile --target=bun-linux-x64 --outfile=opencode-core2
 
-      - name: Upload both binaries
+      - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
           name: core2-bun-and-opencode
