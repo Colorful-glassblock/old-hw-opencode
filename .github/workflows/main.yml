@@ -1,0 +1,72 @@
+name: Debug Bun Workspace
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          submodules: recursive
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: x86_64-unknown-linux-gnu
+          cache: false
+
+      - name: Clone Bun and lol-html
+        run: |
+          # 克隆 Bun
+          git clone --depth 1 https://github.com/oven-sh/bun.git /tmp/bun-src
+          cd /tmp/bun-src
+
+          # 克隆 lol-html
+          mkdir -p vendor
+          git clone --depth 1 https://github.com/cloudflare/lol-html.git vendor/lolhtml
+
+          # 验证
+          if [ ! -f "vendor/lolhtml/Cargo.toml" ]; then
+            echo "lol-html download failed!"
+            exit 1
+          fi
+
+      - name: Read workspace info
+        run: |
+          cd /tmp/bun-src
+          
+          echo "=== Cargo.toml (first 50 lines) ==="
+          head -50 Cargo.toml
+          
+          echo ""
+          echo "=== Workspace members ==="
+          grep -A 30 "members" Cargo.toml || echo "No members field"
+          
+          echo ""
+          echo "=== All binaries (cargo run --bin --list) ==="
+          cargo run --bin --list 2>/dev/null || echo "cargo run --bin --list failed"
+          
+          echo ""
+          echo "=== Workspace binaries (cargo build --workspace --dry-run) ==="
+          cargo build --workspace --dry-run 2>&1 | grep -i "executable" || echo "No executable info"
+          
+          echo ""
+          echo "=== All Cargo.toml files ==="
+          find . -name "Cargo.toml" -not -path "./vendor/*" | head -20
+          
+          echo ""
+          echo "=== Checking for main.rs files ==="
+          find . -name "main.rs" -not -path "./vendor/*" | head -10
+
+      - name: Upload workspace info
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-workspace-info
+          path: |
+            /tmp/bun-src/Cargo.toml
+            /tmp/bun-src/.cargo/config.toml
+            /tmp/bun-src/.cargo/config
