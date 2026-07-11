@@ -44,14 +44,15 @@ jobs:
           export PATH="$HOME/.bun/bin:$PATH"
           bun --version
 
-      - name: Clone Bun with submodules (shallow)
+      - name: Clone Bun (full, with submodules)
         run: |
-          git clone --depth 1 https://github.com/oven-sh/bun.git /tmp/bun-src
+          # 完整克隆（不限制深度）
+          git clone https://github.com/oven-sh/bun.git /tmp/bun-src
           cd /tmp/bun-src
-          git submodule sync
-          git submodule update --init --depth 1
+          # 官方方式：递归拉取子模块
+          git submodule update --init --recursive
           if [ ! -f "vendor/lolhtml/Cargo.toml" ]; then
-            echo "❌ lolhtml submodule failed!"
+            echo "❌ Submodule failed!"
             exit 1
           fi
           echo "✅ Submodules ready"
@@ -64,42 +65,22 @@ jobs:
           export CXX=/usr/bin/clang++-21
           export LD=/usr/bin/lld-21
           bun bd --configure-only
-          if [ ! -f "build/debug/codegen/build_options.rs" ]; then
-            echo "❌ build_options.rs not generated!"
-            exit 1
-          fi
 
-      - name: Build Core2 Bun
+      - name: Build Core2 Bun (official build script)
         run: |
           cd /tmp/bun-src
-          export RUSTFLAGS="-C target-cpu=core2 -C opt-level=3 -C link-arg=-s"
+          export PATH="$HOME/.bun/bin:$PATH"
           export CC=/usr/bin/clang-21
           export CXX=/usr/bin/clang++-21
           export LD=/usr/bin/lld-21
-          cargo build --release --target x86_64-unknown-linux-gnu
-          cp target/x86_64-unknown-linux-gnu/release/bun ${{ github.workspace }}/bun-core2
+          # 复制官方构建方式：bun install + bun run build
+          bun install
+          bun run build --target=x86_64-linux --cpu=core2
+          # 查找产物
+          find . -name "bun" -type f -executable | head -5
 
-      - name: Install opencode deps with Core2 Bun
-        run: |
-          chmod +x ${{ github.workspace }}/bun-core2
-          ${{ github.workspace }}/bun-core2 install
-
-      - name: Build opencode with Core2 Bun
-        run: |
-          ENTRY=$(find packages -name "index.ts" -o -name "cli.ts" -o -name "main.ts" | head -1)
-          if [ -z "$ENTRY" ]; then
-            echo "❌ No entry found!"
-            find . -name "*.ts" | head -20
-            exit 1
-          fi
-          echo "✅ Entry found: $ENTRY"
-          ${{ github.workspace }}/bun-core2 build $ENTRY \
-            --compile --target=bun-linux-x64 --outfile=opencode-core2
-
-      - name: Upload binaries
+      - name: Upload Core2 Bun
         uses: actions/upload-artifact@v4
         with:
-          name: core2-bun-and-opencode
-          path: |
-            bun-core2
-            opencode-core2
+          name: bun-core2
+          path: /tmp/bun-src/packages/bun-release/bun
