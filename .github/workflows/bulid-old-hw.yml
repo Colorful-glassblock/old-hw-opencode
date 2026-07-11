@@ -1,4 +1,4 @@
-name: Build Core2 Bun (Rust) + opencode
+name: Build Core2 Bun + opencode
 
 on:
   workflow_dispatch:
@@ -12,23 +12,39 @@ jobs:
           ref: dev
           submodules: recursive
 
-      # ===== 第一步：编译 Core2 兼容的 Bun（纯 Rust）=====
+      # ===== 1. 安装 Rust（但不跑 cache，避免误判）=====
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
           target: x86_64-unknown-linux-gnu
+          cache: false   # 关键：关闭自动 cache，避免在非 Rust 项目根目录报错
 
+      - name: Cache Rust manually
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            /tmp/bun-src/target
+          key: ${{ runner.os }}-bun-core2-${{ hashFiles('/tmp/bun-src/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-core2-
+
+      # ===== 2. 编译 Core2 版 Bun（必须拉子模块）=====
       - name: Clone and build Bun (Core2)
         run: |
-          # 克隆 Bun 主线（纯 Rust 版本）
-          git clone --depth 1 https://github.com/oven-sh/bun.git /tmp/bun-src
+          # 浅克隆 Bun
+          git clone --depth 1 --recurse-submodules https://github.com/oven-sh/bun.git /tmp/bun-src
           cd /tmp/bun-src
+          
+          # 手动拉取所有子模块（确保 lol_html 存在）
+          git submodule update --init --recursive --depth 1
           
           # 设置 Core2 优化
           export RUSTFLAGS="-C target-cpu=core2 -C opt-level=3 -C link-arg=-s"
           
-          # 构建（Bun 主入口是 bun 包）
+          # 构建（Bun 的 Rust 主包是 bun）
           cargo build --release --target x86_64-unknown-linux-gnu -p bun
           
           # 复制产物
@@ -37,10 +53,15 @@ jobs:
       - name: Make Bun executable
         run: chmod +x ${{ github.workspace }}/bun-core2
 
-      # ===== 第二步：用 Core2 Bun 编译 opencode =====
+      # ===== 3. 用 Core2 Bun 编译 opencode =====
       - name: Install dependencies with Core2 Bun
         run: |
           ${{ github.workspace }}/bun-core2 install
+
+      - name: Find entry point
+        run: |
+          echo "=== Looking for entry ==="
+          find packages -name "index.ts" -o -name "cli.ts" -o -name "main.ts" | head -10
 
       - name: Build opencode with Core2 Bun
         run: |
