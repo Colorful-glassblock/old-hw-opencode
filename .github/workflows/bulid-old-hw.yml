@@ -1,13 +1,10 @@
-name: Build opencode (Core2) from dev
+name: Build Core2 Bun (Rust) + opencode
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - dev
 
 jobs:
-  build-core2:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,59 +12,53 @@ jobs:
           ref: dev
           submodules: recursive
 
-      # ----- 1. 如果有 Rust 部分，编译成 Core2 兼容 -----
+      # ===== 第一步：编译 Core2 兼容的 Bun（纯 Rust）=====
       - name: Setup Rust
-        if: hashFiles('**/Cargo.toml') != ''
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
           target: x86_64-unknown-linux-gnu
-          rustflags: "-C target-cpu=core2 -C opt-level=3 -C link-arg=-s"
 
-      - name: Build Rust components (Core2)
-        if: hashFiles('**/Cargo.toml') != ''
+      - name: Clone and build Bun (Core2)
         run: |
-          export RUSTFLAGS="-C target-cpu=core2 -C opt-level=3 -C link-arg=-s"
-          cargo build --release --target x86_64-unknown-linux-gnu
-
-      - name: Upload Rust binaries
-        if: hashFiles('**/Cargo.toml') != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: opencode-rust-core2
-          path: target/x86_64-unknown-linux-gnu/release/
-
-      # ----- 2. TypeScript 部分：用 Bun 打包成可执行文件 -----
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Install TS dependencies
-        run: bun install
-
-      - name: Build TS with Bun (compile to binary)
-        run: |
-          # 如果 package.json 里有 build 脚本，直接跑
-          bun run build || true
+          # 克隆 Bun 主线（纯 Rust 版本）
+          git clone --depth 1 https://github.com/oven-sh/bun.git /tmp/bun-src
+          cd /tmp/bun-src
           
-          # 如果有入口文件（比如 index.ts），打包成可执行文件
-          # 这步生成的是 JavaScript 字节码 + 运行时，天然跨架构
-          bun build ./src/index.ts --compile --target=bun-linux-x64 --outfile=opencode-ts
+          # 设置 Core2 优化
+          export RUSTFLAGS="-C target-cpu=core2 -C opt-level=3 -C link-arg=-s"
+          
+          # 构建（Bun 主入口是 bun 包）
+          cargo build --release --target x86_64-unknown-linux-gnu -p bun
+          
+          # 复制产物
+          cp target/x86_64-unknown-linux-gnu/release/bun ${{ github.workspace }}/bun-core2
 
-      - name: Upload TS binary
+      - name: Make Bun executable
+        run: chmod +x ${{ github.workspace }}/bun-core2
+
+      # ===== 第二步：用 Core2 Bun 编译 opencode =====
+      - name: Install dependencies with Core2 Bun
+        run: |
+          ${{ github.workspace }}/bun-core2 install
+
+      - name: Build opencode with Core2 Bun
+        run: |
+          # 自动查找入口
+          ENTRY=$(find packages -name "index.ts" -o -name "cli.ts" -o -name "main.ts" | head -1)
+          if [ -z "$ENTRY" ]; then
+            echo "No entry found! Listing all ts files:"
+            find . -name "*.ts" | head -20
+            exit 1
+          fi
+          echo "Entry found: $ENTRY"
+          ${{ github.workspace }}/bun-core2 build $ENTRY \
+            --compile --target=bun-linux-x64 --outfile=opencode-core2
+
+      - name: Upload both binaries
         uses: actions/upload-artifact@v4
         with:
-          name: opencode-ts-core2
-          path: opencode-ts
-
-      # ----- 3. 如果项目有打包工具（比如 pkg、esbuild）-----
-      - name: Build with Node.js bundler
-        run: |
-          npm install -g pkg
-          # 假设入口是 dist/index.js
-          bun run build:node || true
-          pkg dist/index.js --targets node20-linux-x64 --output opencode-node
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: opencode-node-core2
-          path: opencode-node
+          name: core2-bun-and-opencode
+          path: |
+            bun-core2
+            opencode-core2
