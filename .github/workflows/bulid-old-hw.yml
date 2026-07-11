@@ -29,25 +29,30 @@ jobs:
           key: ${{ runner.os }}-bun-core2-${{ hashFiles('/tmp/bun-src/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-bun-core2-
 
-      - name: Clone Bun and download lolhtml
+      - name: Clone Bun and lol-html
         run: |
-          # 1. 浅克隆 Bun
+          # 1. 克隆 Bun
           git clone --depth 1 https://github.com/oven-sh/bun.git /tmp/bun-src
           cd /tmp/bun-src
-          
-          # 2. 下载 lolhtml 源码（不用 Git）
-          mkdir -p vendor/lolhtml
-          curl -L https://github.com/oven-sh/lolhtml/archive/refs/heads/main.tar.gz | tar -xz --strip-components=1 -C vendor/lolhtml
-          
-          # 3. 检查是否下载成功
-          ls -la vendor/lolhtml/
-          
+
+          # 2. 克隆 Cloudflare 的 lol-html（带连字符！）
+          mkdir -p vendor
+          git clone --depth 1 https://github.com/cloudflare/lol-html.git vendor/lolhtml
+
+          # 3. 验证是否下载成功
+          if [ ! -f "vendor/lolhtml/Cargo.toml" ]; then
+            echo "lol-html download failed!"
+            ls -la vendor/lolhtml/
+            exit 1
+          fi
+          echo "lol-html downloaded successfully!"
+
           # 4. 设置 Core2 优化
           export RUSTFLAGS="-C target-cpu=core2 -C opt-level=3 -C link-arg=-s"
-          
+
           # 5. 构建 Bun
           cargo build --release --target x86_64-unknown-linux-gnu -p bun
-          
+
           # 6. 复制产物
           cp target/x86_64-unknown-linux-gnu/release/bun ${{ github.workspace }}/bun-core2
 
@@ -57,11 +62,6 @@ jobs:
       - name: Install opencode dependencies with Core2 Bun
         run: |
           ${{ github.workspace }}/bun-core2 install
-
-      - name: Find entry point
-        run: |
-          echo "=== Looking for entry ==="
-          find packages -name "index.ts" -o -name "cli.ts" -o -name "main.ts" | head -10
 
       - name: Build opencode with Core2 Bun
         run: |
