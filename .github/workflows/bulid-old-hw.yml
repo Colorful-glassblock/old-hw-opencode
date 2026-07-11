@@ -1,0 +1,73 @@
+name: Build opencode (Core2) from dev
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - dev
+
+jobs:
+  build-core2:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          submodules: recursive
+
+      # ----- 1. 如果有 Rust 部分，编译成 Core2 兼容 -----
+      - name: Setup Rust
+        if: hashFiles('**/Cargo.toml') != ''
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: x86_64-unknown-linux-gnu
+          rustflags: "-C target-cpu=core2 -C opt-level=3 -C link-arg=-s"
+
+      - name: Build Rust components (Core2)
+        if: hashFiles('**/Cargo.toml') != ''
+        run: |
+          export RUSTFLAGS="-C target-cpu=core2 -C opt-level=3 -C link-arg=-s"
+          cargo build --release --target x86_64-unknown-linux-gnu
+
+      - name: Upload Rust binaries
+        if: hashFiles('**/Cargo.toml') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode-rust-core2
+          path: target/x86_64-unknown-linux-gnu/release/
+
+      # ----- 2. TypeScript 部分：用 Bun 打包成可执行文件 -----
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install TS dependencies
+        run: bun install
+
+      - name: Build TS with Bun (compile to binary)
+        run: |
+          # 如果 package.json 里有 build 脚本，直接跑
+          bun run build || true
+          
+          # 如果有入口文件（比如 index.ts），打包成可执行文件
+          # 这步生成的是 JavaScript 字节码 + 运行时，天然跨架构
+          bun build ./src/index.ts --compile --target=bun-linux-x64 --outfile=opencode-ts
+
+      - name: Upload TS binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode-ts-core2
+          path: opencode-ts
+
+      # ----- 3. 如果项目有打包工具（比如 pkg、esbuild）-----
+      - name: Build with Node.js bundler
+        run: |
+          npm install -g pkg
+          # 假设入口是 dist/index.js
+          bun run build:node || true
+          pkg dist/index.js --targets node20-linux-x64 --output opencode-node
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opencode-node-core2
+          path: opencode-node
